@@ -1,0 +1,559 @@
+name: Slither Analysis
+
+# Reusable workflow for Slither static analysis with advanced features:
+# - Multi package manager support (npm/yarn/pnpm)
+# - Flexible compilation (custom commands or Slither-handled)
+# - SARIF output for GitHub Code Scanning integration
+# - Comprehensive security sanitization and error handling
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: 'Target directory to scan'
+        required: false
+        type: string
+        default: 'packages/contracts/'
+      solc-version:
+        description: 'Solidity compiler version'
+        required: false
+        type: string
+        default: '0.8.20'
+      fail-on:
+        description: 'Fail on issue level'
+        required: false
+        type: string
+        default: 'none'
+      slither-args:
+        description: 'Additional Slither arguments'
+        required: false
+        type: string
+        default: '--filter-paths "(openzeppelin|mocks|interfaces|deprecated|templates)" --exclude-informational --exclude-optimization --checklist --markdown-root ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/'
+      sarif-file:
+        description: 'Path to generate SARIF output file'
+        required: false
+        type: string
+        default: 'slither-results.sarif'
+      skip-change-detection:
+        description: 'Skip internal change detection (useful when using external change detection)'
+        required: false
+        type: boolean
+        default: false
+      env-vars:
+        description: 'Additional environment variables in JSON format (e.g., {"VECHAIN_URL_DEVNET": "value", "OTHER_VAR": "value"})'
+        required: false
+        type: string
+        default: '{}'
+      cache:
+        description: 'Package manager for caching in the default directory. Supported values: npm, yarn, pnpm.'
+        required: false
+        type: string
+        default: 'yarn'
+      compile-command:
+        description: 'Command to compile contracts (use "skip" to let Slither handle compilation)'
+        required: false
+        type: string
+        default: 'skip'
+      ignore-compile:
+        # Advanced control: when true, Slither uses existing artifacts without any compilation
+        # Different from compile-command="skip" which lets Slither handle compilation internally
+        description: 'If true, Slither will not attempt to compile the project and will use existing artifacts'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      MNEMONIC:
+        description: 'Mnemonic for local environment (optional - will use dummy if not provided)'
+        required: false
+      TESTNET_STAGING_MNEMONIC:
+        description: 'Mnemonic for testnet staging environment (optional - will use dummy if not provided)'
+        required: false
+      GALACTICA_TEST_MNEMONIC:
+        description: 'Mnemonic for Galactica test environment (optional - will use dummy if not provided)'
+        required: false
+      VECHAIN_URL_DEVNET:
+        description: 'VeChain devnet URL (optional - commonly used for VeChain projects)'
+        required: false
+
+jobs:
+  # Conditional execution: only run Slither if Solidity files changed (unless explicitly skipped)
+  # This optimizes CI/CD by avoiding unnecessary analysis on unrelated changes
+  check-changes:
+    name: Check for Solidity file changes
+    runs-on: ubuntu-latest
+    outputs:
+      # Force 'true' if skip-change-detection is enabled, otherwise use actual file change detection
+      solidity-changed: ${{ inputs.skip-change-detection == true && 'true' || steps.changes.outputs.solidity }}
+    steps:
+      - name: Skip change detection
+        if: inputs.skip-change-detection == true
+        run: echo "Change detection skipped - will run Slither analysis"
+
+      - name: Checkout repository
+        if: inputs.skip-change-detection != true
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for changes in Solidity files
+        if: inputs.skip-change-detection != true
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: changes
+        with:
+          filters: |
+            solidity:
+              - '**/*.sol'
+              - '**/hardhat.config.*'
+              - '**/package.json'
+              - '**/yarn.lock'
+
+  # Main analysis job: runs Slither with comprehensive error handling and security features
+  slither:
+    name: Slither Analysis
+    runs-on: ubuntu-latest
+    needs: [check-changes]
+    if: needs.check-changes.outputs.solidity-changed == 'true'
+    outputs:
+      # Comprehensive outputs for external workflow integration and monitoring
+      compilation-status: ${{ inputs.compile-command == 'skip' && 'skipped' || steps.compile.outcome }}
+      slither-status: ${{ steps.slither.outcome }}
+      sanitization-status: ${{ 'skipped' }}
+      comment-status: ${{ steps.pr-comment.outcome == 'success' && 'success' || 'failed' }}
+      sarif-file: ${{ steps.slither.outputs.sarif }}
+      overall-status: ${{ (inputs.compile-command == 'skip' || steps.compile.outcome == 'success') && steps.slither.outcome == 'success' && 'success' || 'failed' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+            persist-credentials: false
+
+      - name: Use Node v20
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: ${{ inputs.cache }}
+
+      - name: Install dependencies
+        env:
+            CACHE_TYPE: ${{ inputs.cache }}
+        run: |
+            if [[ "$CACHE_TYPE" == "npm" ]]; then
+              npm ci
+            elif [[ "$CACHE_TYPE" == "pnpm" ]]; then
+              pnpm install --frozen-lockfile
+            else
+              yarn install --frozen-lockfile
+            fi
+
+      - name: Cache Solidity compilers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/hardhat-nodejs
+          key: ${{ runner.os }}-solc-${{ hashFiles('./packages/contracts/hardhat.config.ts') }}
+          restore-keys: |
+            ${{ runner.os }}-solc-
+
+      # Security-hardened dynamic environment variable setup with validation and sanitization
+      - name: Set up dynamic environment variables
+        env:
+          ENV_VARS_JSON: ${{ inputs.env-vars }}
+        run: |
+          echo "Setting up environment variables..."
+          
+          # Define list of prohibited environment variables (security critical)
+          PROHIBITED_VARS="PATH LD_LIBRARY_PATH LD_PRELOAD NODE_PATH HOME USER SHELL PWD GITHUB_TOKEN RUNNER_TOOL_CACHE GITHUB_ACTIONS RUNNER_OS RUNNER_ARCH"
+          
+          # Create temporary file for sensitive variables tracking
+          SENSITIVE_VARS_FILE=$(mktemp)
+          
+          # Validate and set custom environment variables
+          if [ "$ENV_VARS_JSON" != "{}" ]; then
+            echo "Processing custom environment variables..."
+            
+            # Validate JSON syntax first
+            if ! echo "$ENV_VARS_JSON" | jq empty 2>/dev/null; then
+              echo "ERROR: Invalid JSON format in env-vars input"
+              exit 1
+            fi
+            
+            # Process each environment variable with security checks
+            echo "$ENV_VARS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r key value; do
+              # Check if variable name is prohibited
+              if echo "$PROHIBITED_VARS" | grep -w "$key" > /dev/null; then
+                echo "WARNING: Skipping prohibited environment variable: $key"
+                continue
+              fi
+              
+              # Validate variable name (alphanumeric + underscore only)
+              if ! echo "$key" | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' > /dev/null; then
+                echo "WARNING: Skipping invalid variable name: $key"
+                continue
+              fi
+              
+              # Check if value contains sensitive patterns
+              if echo "$value" | grep -qE "(key|token|secret|password|private)" && echo "$value" | grep -qE "[A-Za-z0-9]{20,}"; then
+                echo "WARNING: Variable $key appears to contain sensitive data - consider using GitHub secrets instead"
+                echo "$key" >> $SENSITIVE_VARS_FILE
+              fi
+              
+              # Sanitize value (remove dangerous characters)
+              safe_value="$value"
+              safe_value="${safe_value//;/.}"
+              safe_value="${safe_value//&/.}"
+              safe_value="${safe_value//|/.}"
+              safe_value="${safe_value//\`/.}"
+              safe_value="${safe_value//\$/.}"
+              safe_value="${safe_value//(/.}"
+              safe_value="${safe_value//)/.}"
+              safe_value="${safe_value//{/.}"
+              safe_value="${safe_value//}/.}"
+              
+              # Limit value length to prevent abuse
+              if [ ${#safe_value} -gt 500 ]; then
+                echo "WARNING: Variable $key value too long, truncating"
+                safe_value="${safe_value:0:500}"
+              fi
+              
+              echo "Setting environment variable: $key=***"
+              echo "$key=$safe_value" >> $GITHUB_ENV
+            done
+          fi
+          
+          # Set default mnemonics if not provided (these are safe to log as they're dummy values)
+          if [ -z "${{ secrets.MNEMONIC }}" ]; then
+            echo "MNEMONIC=test test test test test test test test test test test junk" >> $GITHUB_ENV
+          else
+            echo "MNEMONIC=***HIDDEN***"
+            echo "MNEMONIC=${{ secrets.MNEMONIC }}" >> $GITHUB_ENV
+            echo "MNEMONIC" >> $SENSITIVE_VARS_FILE
+          fi
+          
+          if [ -z "${{ secrets.TESTNET_STAGING_MNEMONIC }}" ]; then
+            echo "TESTNET_STAGING_MNEMONIC=test test test test test test test test test test test junk" >> $GITHUB_ENV
+          else
+            echo "TESTNET_STAGING_MNEMONIC=***HIDDEN***"
+            echo "TESTNET_STAGING_MNEMONIC=${{ secrets.TESTNET_STAGING_MNEMONIC }}" >> $GITHUB_ENV
+            echo "TESTNET_STAGING_MNEMONIC" >> $SENSITIVE_VARS_FILE
+          fi
+          
+          if [ -z "${{ secrets.GALACTICA_TEST_MNEMONIC }}" ]; then
+            echo "GALACTICA_TEST_MNEMONIC=test test test test test test test test test test test junk" >> $GITHUB_ENV
+          else
+            echo "GALACTICA_TEST_MNEMONIC=***HIDDEN***"
+            echo "GALACTICA_TEST_MNEMONIC=${{ secrets.GALACTICA_TEST_MNEMONIC }}" >> $GITHUB_ENV
+            echo "GALACTICA_TEST_MNEMONIC" >> $SENSITIVE_VARS_FILE
+          fi
+          
+          if [ -n "${{ secrets.VECHAIN_URL_DEVNET }}" ]; then
+            echo "VECHAIN_URL_DEVNET=***HIDDEN***"
+            echo "VECHAIN_URL_DEVNET=${{ secrets.VECHAIN_URL_DEVNET }}" >> $GITHUB_ENV
+            echo "VECHAIN_URL_DEVNET" >> $SENSITIVE_VARS_FILE
+          fi
+          
+          # Export sensitive variables list for later steps
+          echo "SENSITIVE_VARS_FILE=$SENSITIVE_VARS_FILE" >> $GITHUB_ENV
+          
+          # Set additional security environment variables
+          echo "NODE_ENV=ci" >> $GITHUB_ENV
+          echo "CI=true" >> $GITHUB_ENV
+
+      # Conditional compilation: only run if custom compile command is specified
+      # When compile-command is "skip", Slither handles compilation internally
+      - name: Compile contracts (if needed)
+        id: compile
+        if: inputs.compile-command != 'skip'
+        env:
+          COMPILE_COMMAND: ${{ inputs.compile-command }}
+        run: |
+          $COMPILE_COMMAND
+
+          # Create symlink for Hardhat projects with custom artifacts path (some projects use src/.artifacts)
+          if [ -d "src/.artifacts" ] && [ ! -e "artifacts" ]; then
+            ln -sf src/.artifacts artifacts
+            echo "✅ Created symlink: artifacts -> src/.artifacts"
+          fi
+
+      - name: Run Slither
+        uses: crytic/slither-action@4fd765aeef19915d04ddf0be90c2930036a774d8 # v0.4.1
+        id: slither
+        with:
+          ignore-compile: ${{ inputs.ignore-compile }}
+          target: ${{ inputs.target }}
+          fail-on: ${{ inputs.fail-on }}
+          slither-args: ${{ inputs.slither-args }}
+          solc-version: ${{ inputs.solc-version }}
+          sarif: ${{ inputs.sarif-file }}
+
+      # Upload SARIF results to GitHub Code Scanning for security dashboard integration
+      - name: Upload SARIF file to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@0499de31b99561a6d14a36a5f662c2a54f91beee # v4.31.2
+        if: always() && steps.slither.outputs.sarif
+        continue-on-error: true
+        with:
+          sarif_file: ${{ steps.slither.outputs.sarif }}
+          category: slither-analysis
+
+      # Archive SARIF file and debug logs for troubleshooting and audit trail
+      - name: Upload SARIF and debug artifacts
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        continue-on-error: true
+        if: always()
+        with:
+          name: slither-analysis-results
+          path: |
+            ${{ inputs.sarif-file }}
+            slither-output.txt
+            *.log
+          retention-days: 7
+
+      # Apply false positive suppressions if script and config exist in calling repository
+      # Repositories should provide .github/scripts/slither-filter.mjs and slither.config.json
+      - name: Apply suppressions
+        id: fp-suppressed
+        continue-on-error: true
+        run: |
+          SCRIPT_PATH=".github/scripts/slither-filter.mjs"
+          CONFIG_PATH="slither.config.json"
+          INPUT_SARIF="${{ steps.slither.outputs.sarif }}"
+          OUTPUT_SARIF="slither.filtered.json"
+          
+          # Check if script exists in calling repository
+          if [ ! -f "$SCRIPT_PATH" ]; then
+            echo "⚠️  Suppression script not found at $SCRIPT_PATH - using original SARIF"
+            echo "💡 To enable suppressions, add .github/scripts/slither-filter.mjs to your repository"
+            cp "$INPUT_SARIF" "$OUTPUT_SARIF"
+            exit 0
+          fi
+          
+          # Check if config exists in calling repository
+          if [ ! -f "$CONFIG_PATH" ]; then
+            echo "⚠️  No slither.config.json found in repository - using original SARIF"
+            echo "💡 To enable suppressions, add slither.config.json to your repository root"
+            cp "$INPUT_SARIF" "$OUTPUT_SARIF"
+            exit 0
+          fi
+          
+          # Apply suppressions
+          echo "✅ Applying suppressions from $CONFIG_PATH using $SCRIPT_PATH..."
+          node "$SCRIPT_PATH" "$INPUT_SARIF" "$CONFIG_PATH" "$OUTPUT_SARIF"
+         
+      - name: Upload filtered JSON
+        uses: actions/upload-artifact@v5
+        with:
+          name: slither-filtered
+          path: slither.filtered.json
+
+      - name: Comment PR with formatted SARIF (Slither)
+        id: pr-comment
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v8
+        env:
+          SARIF_PATH: slither.filtered.json #${{ steps.fp-suppressed.outputs.stdout }}
+        with:
+          script: |
+            const fs = require('fs');
+      
+            let sarifPath = process.env.SARIF_PATH;
+            if (!sarifPath || !fs.existsSync(sarifPath)) {
+              sarifPath = '${{ steps.slither.outputs.sarif }}';
+              core.info('Filtered SARIF not found, using original SARIF.');
+            }
+            if (!sarifPath || !fs.existsSync(sarifPath)) {
+              core.info('No SARIF found, skipping comment.');
+              return;
+            }
+            const sarif = JSON.parse(fs.readFileSync(sarifPath, 'utf8'));
+            const run = sarif.runs?.[0];
+            if (!run) {
+              core.info('No runs in SARIF.');
+              return;
+            }
+      
+            // Rule metadata
+            const ruleMeta = {};
+            for (const r of (run.tool?.driver?.rules || [])) {
+              const key = r.name || r.id;
+              ruleMeta[key] = {
+                title: r.name || r.id,
+                severity: Number(r.properties?.['security-severity'] ?? 0),
+                precision: String(r.properties?.precision || '').toLowerCase(),
+                short: r.shortDescription?.text || r.help?.text || r.name || r.id,
+              };
+            }
+      
+            // Mappers
+            const impactFromSeverity = (s) => (s >= 7.0 ? 'High' : s >= 4.0 ? 'Medium' : 'Low');
+            const confidenceFromPrecision = (p) =>
+              (p === 'very-high' || p === 'high') ? 'High' :
+              p === 'medium' ? 'Medium' :
+              p === 'low' ? 'Low' : 'Medium';
+            const emojiForImpact = (impact) =>
+              impact === 'High' ? '🔴' :
+              impact === 'Medium' ? '🟠' : '🟡';
+            const emojiForId = (i) => '🟣'; // one color for IDs; change if you want variety
+      
+            // Group results by rule title
+            const groups = new Map();
+            const results = run.results || [];
+            results.forEach((res, idx) => {
+              const ruleId = res.ruleId || res.rule?.id || res.rule?.name;
+              const title = (ruleId && ruleMeta[ruleId]?.title) ? ruleMeta[ruleId].title : (ruleId || 'unknown');
+              if (!groups.has(title)) groups.set(title, []);
+              groups.get(title).push({ res, idx, ruleId });
+            });
+      
+            // Build GitHub blob URLs
+            const blobBase = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/blob/${context.sha}`;
+            const linkFor = (loc) => {
+              const pl = loc?.physicalLocation;
+              const f = pl?.artifactLocation?.uri || '';
+              const start = pl?.region?.startLine;
+              const end = pl?.region?.endLine || start;
+              const range = Number.isFinite(start) ? `#L${start}${(end && end !== start) ? `-L${end}` : ''}` : '';
+              return f ? `${blobBase}/${f}${range}` : null;
+            };
+            const nameFor = (res) => {
+              const ll = res.logicalLocations?.[0]?.fullyQualifiedName || res.logicalLocations?.[0]?.name;
+              if (ll) return ll;
+              const t = res.message?.text || '';
+              const m = t.match(/\[([^\]]+)\]/); // e.g. [Contract.func(...)]
+              return m ? m[1] : null;
+            };
+      
+            // Build Markdown
+            let md = `# 🔍 Slither Findings (SARIF)\n\n`;
+            if (results.length === 0) {
+              md += `No issues reported.\n`;
+            } else {
+              for (const [ruleTitle, items] of groups) {
+                const meta = ruleMeta[items[0].ruleId] || ruleMeta[ruleTitle] || {};
+                const impact = impactFromSeverity(meta.severity ?? 0);
+                const confidence = confidenceFromPrecision(meta.precision || '');
+                const impactEmoji = emojiForImpact(impact);
+      
+                md += `## ${impactEmoji} ${ruleTitle}\n`;
+                md += `Impact: **${impact}**  \n`;
+                md += `Confidence: **${confidence}**\n`;
+      
+                for (const { res, idx } of items) {
+                  const idBadge = `${emojiForId(idx)} **ID-${idx}**`;
+                  const loc = res.locations?.[0];
+                  const href = linkFor(loc);
+                  const func = nameFor(res);
+                  const title = func ? `${func}` : (loc?.physicalLocation?.artifactLocation?.uri || 'Location');
+                  const msg = (res.message?.text || meta.short || ruleTitle).split('\n')[0];
+      
+                  md += `\n${idBadge}\n`;
+                  md += `${msg}\n`;
+                  if (href) {
+                    md += `- [${title}](${href})\n\n`;
+                    md += `${href}\n`;
+                  } else {
+                    md += `\n`;
+                  }
+                }
+                md += `\n`;
+              }
+            }
+      
+            // Upsert single PR comment
+            const header = '🔍 Slither Findings (SARIF)';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(header));
+            const body = md;
+      
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      # Generate workflow summary for GitHub UI - visible in the workflow run summary tab
+      # Provides quick overview of all analysis steps and their status with SARIF-based severity breakdown
+      - name: Analysis Summary
+        if: always()
+        continue-on-error: true
+        env:
+          COMPILE_COMMAND: ${{ inputs.compile-command }}
+        run: |
+          echo "# 🔍 Slither Analysis Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check compilation status
+          if [ "$COMPILE_COMMAND" = "skip" ]; then
+            echo "⏭️ **Compilation**: Skipped (handled by Slither)" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.compile.outcome }}" = "success" ]; then
+            echo "✅ **Compilation**: Success" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Compilation**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check Slither execution
+          if [ "${{ steps.slither.outcome }}" = "success" ]; then
+            echo "✅ **Slither Execution**: Success" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Slither Execution**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check SARIF generation
+          if [ "${{ steps.slither.outputs.sarif }}" != "" ]; then
+            echo "✅ **SARIF Output**: Generated and uploaded" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **SARIF Output**: Not generated" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check suppression status
+          if [ "${{ steps.fp-suppressed.outcome }}" = "success" ]; then
+            echo "✅ **False Positive Suppression**: Applied" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **False Positive Suppression**: Skipped (no config or script)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Show filtered results count if available
+          if [ -f "slither.filtered.json" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## 📊 Filtered Results" >> $GITHUB_STEP_SUMMARY
+            
+            # Parse SARIF and show count by severity
+            python3 -c "
+          import json, sys
+          try:
+              with open('slither.filtered.json') as f:
+                  sarif = json.load(f)
+              results = sarif.get('runs', [{}])[0].get('results', [])
+              rules = {r.get('id') or r.get('name'): r for r in sarif.get('runs', [{}])[0].get('tool', {}).get('driver', {}).get('rules', [])}
+              
+              high = medium = low = 0
+              for r in results:
+                  rule_id = r.get('ruleId')
+                  sev = rules.get(rule_id, {}).get('properties', {}).get('security-severity', 0) if rule_id in rules else 0
+                  if sev >= 7.0: high += 1
+                  elif sev >= 4.0: medium += 1
+                  else: low += 1
+              
+              print(f'- 🔴 **High**: {high}')
+              print(f'- 🟠 **Medium**: {medium}')
+              print(f'- 🟡 **Low**: {low}')
+              print(f'- **Total**: {len(results)}')
+          except Exception as e:
+              print(f'Could not parse SARIF: {e}', file=sys.stderr)
+          " >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "- Results count unavailable" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "📋 Check [artifacts](../artifacts) for detailed SARIF results" >> $GITHUB_STEP_SUMMARY

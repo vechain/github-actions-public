@@ -1,0 +1,133 @@
+name: Update README on Release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # Required for pushing to repository and updating files
+  pull-requests: write # Required for creating pull requests when direct push fails
+
+jobs:
+  update-readme:
+    name: Update README with New Release Tag and SHA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository # zizmor: ignore[artipacked] Persist credentials is needed in this case
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true 
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Git
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          # Configure Git to use token for authentication since persist-credentials: false
+          git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Get the new release tag and SHA
+        id: get-release-info
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          new_tag=${{ env.RELEASE_TAG }}
+          echo "new_tag=$new_tag"
+          if [[ ! $new_tag =~ ^v\.?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: The new tag $new_tag is not in the format v.MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          # Fetch all tags (if not already fetched)
+          git fetch --tags
+          # Get the SHA of the new tag
+          new_sha=$(git rev-parse "$new_tag")
+          echo "new_sha=$new_sha"
+          echo "new_tag=$new_tag" >> $GITHUB_ENV
+          echo "new_sha=$new_sha" >> $GITHUB_ENV
+
+      - name: Find and replace tags and SHAs in README.md
+        run: |
+          old_tag=$(grep -oP 'v\.?\d+\.\d+\.\d+' README.md | head -1)
+          echo "old_tag=$old_tag" >> $GITHUB_ENV
+          if [ -z "$old_tag" ]; then
+            echo "Error: Could not find the old tag in README.md"
+            exit 1
+          fi
+          # Get the SHA of the old tag
+          old_sha=$(git rev-parse "$old_tag")
+          echo "old_sha=$old_sha" >> $GITHUB_ENV
+          if [ -z "$old_sha" ]; then
+            echo "Error: Could not find the old SHA for tag $old_tag"
+            exit 1
+          fi
+          # Replace old tag and SHA with new ones in README.md
+          sed -i "s/$old_tag/$new_tag/g" README.md
+          sed -i "s/$old_sha/$new_sha/g" README.md
+        
+
+      - name: Commit changes to main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash  # Use bash without the -e flag
+        run: |
+          git add README.md
+          if git commit -m "Update README.md with new release tag and SHA"; then
+            if git push origin main; then
+              echo "Changes pushed to main successfully"
+              echo "commit_success=true" >> $GITHUB_ENV
+            else
+              echo "Push to main failed"
+              echo "commit_success=false" >> $GITHUB_ENV
+            fi
+          else
+            echo "No changes to commit"
+            echo "commit_success=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create branch and PR if commit to main fails
+        if: env.commit_success == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch_name="update-readme-${{ env.new_tag }}"
+          if git checkout -b $branch_name; then
+            git push -u origin $branch_name
+            PR_BODY="This PR updates the README.md file with the new release tag ${{ env.new_tag }} and SHA ${{ env.new_sha }}."
+            if gh pr create --title "Update README for release ${{ env.new_tag }}" --body "$PR_BODY" --base main --head $branch_name; then
+              echo "pr_creation_success=true" >> $GITHUB_ENV
+            else
+              echo "Error: Unable to create the Pull Request. You would need to create it manually."
+              echo "::warning::Unable to create the Pull Request. You would need to create it manually."
+              echo "pr_creation_success=false" >> $GITHUB_ENV
+            fi
+          else
+            echo "Error: Unable to create the branch. Make sure you have the necessary permissions."
+            exit 1
+          fi
+
+      - name: Clean up Git configuration
+        if: always()
+        run: |
+          # Remove token from Git configuration for security
+          git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf || true
+
+      - name: Write summary
+        if: always()
+        run: |
+          {
+            echo "### 📝 Update README Summary"
+            echo "- **Old Tag:** ${{ env.old_tag }}"
+            echo "- **New Tag:** ${{ env.new_tag }}"
+            echo "- **Old SHA:** ${{ env.old_sha }}"
+            echo "- **New SHA:** ${{ env.new_sha }}"
+            if [ "${{ env.commit_success }}" == "true" ]; then
+              echo "- **Outcome:** Changes committed to main successfully"
+            elif [ "${{ env.pr_creation_success }}" == "true" ]; then
+              echo "- **Outcome:** PR created successfully"
+            else
+              echo "- **Outcome:** Unable to create the PR automatically. [Click here to create it manually](https://github.com/${{ github.repository }}/pull/new/update-readme-${{ env.new_tag }})"
+            fi
+          } >> $GITHUB_STEP_SUMMARY

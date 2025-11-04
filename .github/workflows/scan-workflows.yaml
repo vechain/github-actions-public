@@ -1,0 +1,81 @@
+name: Zizmor Checks
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+  workflow_call:
+    inputs:
+      persona:
+        description: 'Persona to use for the zizmor scan'
+        required: false
+        type: string
+        default: 'regular'
+      min_severity:
+        description: 'Minimum severity to report'
+        required: false
+        type: string
+        default: 'medium'
+    secrets:
+      ZIZMOR_TOKEN:
+        description: 'Personal Access Token for zizmor'
+        required: true
+  workflow_dispatch:
+    inputs:
+      persona:
+        description: 'Persona to use for the zizmor scan'
+        required: false
+        type: choice
+        default: 'regular'
+        options:
+          - regular
+          - pedantic
+          - auditor
+
+
+permissions: {}
+
+jobs:
+  zizmor:
+    name: Run Zizmor Scan and ReviewDog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # only needed for private repos
+      actions: read # only needed for private repos
+      checks: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
+
+      - name: Run Zizmor Scan
+        run: uvx zizmor --format=sarif --persona=$PERSONA --min-severity=$MIN_SEVERITY --color=never . > results.sarif
+        env:
+          GH_TOKEN: ${{ secrets.ZIZMOR_TOKEN }}
+          PERSONA: ${{ inputs.persona || 'regular' }}
+          MIN_SEVERITY: ${{ inputs.min_severity || 'medium' }}
+
+      - name: Install ReviewDog
+        uses: reviewdog/action-setup@d8edfce3dd5e1ec6978745e801f9c50b5ef80252 # v1.4.0
+        with:
+          reviewdog_version: latest
+
+      - name: Run ReviewDog PR review
+        if: ${{ github.event_name == 'pull_request' }}
+        run: reviewdog -f=sarif -name=zizmor -reporter=github-pr-review -tee < results.sarif
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run ReviewDog check
+        if: ${{ github.event_name != 'pull_request' }}
+        run: reviewdog -f=sarif -name=zizmor -reporter=github-check -tee -fail-on-error < results.sarif
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}

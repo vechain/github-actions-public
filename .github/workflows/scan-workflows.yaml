@@ -32,7 +32,15 @@ on:
           - regular
           - pedantic
           - auditor
-
+      min_severity:
+        description: 'Minimum severity to report'
+        required: false
+        type: choice
+        default: 'medium'
+        options:
+          - low
+          - medium
+          - high
 
 permissions: {}
 
@@ -57,7 +65,7 @@ jobs:
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
 
       - name: Run Zizmor Scan
-        run: uvx zizmor --format=sarif --persona=$PERSONA --min-severity=$MIN_SEVERITY --color=never . > results.sarif
+        run: uvx zizmor --format=sarif --persona="$PERSONA" --min-severity="$MIN_SEVERITY" --color=never . > results.sarif
         env:
           GH_TOKEN: ${{ secrets.ZIZMOR_TOKEN }}
           PERSONA: ${{ inputs.persona || 'regular' }}

@@ -193,7 +193,7 @@ jobs:
               # Check if value contains sensitive patterns
               if echo "$value" | grep -qE "(key|token|secret|password|private)" && echo "$value" | grep -qE "[A-Za-z0-9]{20,}"; then
                 echo "WARNING: Variable $key appears to contain sensitive data - consider using GitHub secrets instead"
-                echo "$key" >> $SENSITIVE_VARS_FILE
+                echo "$key" >> "$SENSITIVE_VARS_FILE"
               fi
               
               # Sanitize value (remove dangerous characters)
@@ -209,53 +209,53 @@ jobs:
               safe_value="${safe_value//}/.}"
               
               # Limit value length to prevent abuse
-              if [ ${#safe_value} -gt 500 ]; then
+              if [ "${#safe_value}" -gt 500 ]; then
                 echo "WARNING: Variable $key value too long, truncating"
                 safe_value="${safe_value:0:500}"
               fi
               
               echo "Setting environment variable: $key=***"
-              echo "$key=$safe_value" >> $GITHUB_ENV
+              echo "$key=$safe_value" >> "$GITHUB_ENV"
             done
           fi
           
           # Set default mnemonics if not provided (these are safe to log as they're dummy values)
           if [ -z "${{ secrets.MNEMONIC }}" ]; then
-            echo "MNEMONIC=test test test test test test test test test test test junk" >> $GITHUB_ENV
+            echo "MNEMONIC=test test test test test test test test test test test junk" >> "$GITHUB_ENV"
           else
             echo "MNEMONIC=***HIDDEN***"
-            echo "MNEMONIC=${{ secrets.MNEMONIC }}" >> $GITHUB_ENV
-            echo "MNEMONIC" >> $SENSITIVE_VARS_FILE
+            echo "MNEMONIC=${{ secrets.MNEMONIC }}" >> "$GITHUB_ENV"
+            echo "MNEMONIC" >> "$SENSITIVE_VARS_FILE"
           fi
           
           if [ -z "${{ secrets.TESTNET_STAGING_MNEMONIC }}" ]; then
-            echo "TESTNET_STAGING_MNEMONIC=test test test test test test test test test test test junk" >> $GITHUB_ENV
+            echo "TESTNET_STAGING_MNEMONIC=test test test test test test test test test test test junk" >> "$GITHUB_ENV"
           else
             echo "TESTNET_STAGING_MNEMONIC=***HIDDEN***"
-            echo "TESTNET_STAGING_MNEMONIC=${{ secrets.TESTNET_STAGING_MNEMONIC }}" >> $GITHUB_ENV
-            echo "TESTNET_STAGING_MNEMONIC" >> $SENSITIVE_VARS_FILE
+            echo "TESTNET_STAGING_MNEMONIC=${{ secrets.TESTNET_STAGING_MNEMONIC }}" >> "$GITHUB_ENV"
+            echo "TESTNET_STAGING_MNEMONIC" >> "$SENSITIVE_VARS_FILE"
           fi
           
           if [ -z "${{ secrets.GALACTICA_TEST_MNEMONIC }}" ]; then
-            echo "GALACTICA_TEST_MNEMONIC=test test test test test test test test test test test junk" >> $GITHUB_ENV
+            echo "GALACTICA_TEST_MNEMONIC=test test test test test test test test test test test junk" >> "$GITHUB_ENV"
           else
             echo "GALACTICA_TEST_MNEMONIC=***HIDDEN***"
-            echo "GALACTICA_TEST_MNEMONIC=${{ secrets.GALACTICA_TEST_MNEMONIC }}" >> $GITHUB_ENV
-            echo "GALACTICA_TEST_MNEMONIC" >> $SENSITIVE_VARS_FILE
+            echo "GALACTICA_TEST_MNEMONIC=${{ secrets.GALACTICA_TEST_MNEMONIC }}" >> "$GITHUB_ENV"
+            echo "GALACTICA_TEST_MNEMONIC" >> "$SENSITIVE_VARS_FILE"
           fi
           
           if [ -n "${{ secrets.VECHAIN_URL_DEVNET }}" ]; then
             echo "VECHAIN_URL_DEVNET=***HIDDEN***"
-            echo "VECHAIN_URL_DEVNET=${{ secrets.VECHAIN_URL_DEVNET }}" >> $GITHUB_ENV
-            echo "VECHAIN_URL_DEVNET" >> $SENSITIVE_VARS_FILE
+            echo "VECHAIN_URL_DEVNET=${{ secrets.VECHAIN_URL_DEVNET }}" >> "$GITHUB_ENV"
+            echo "VECHAIN_URL_DEVNET" >> "$SENSITIVE_VARS_FILE"
           fi
           
-          # Export sensitive variables list for later steps
-          echo "SENSITIVE_VARS_FILE=$SENSITIVE_VARS_FILE" >> $GITHUB_ENV
-          
-          # Set additional security environment variables
-          echo "NODE_ENV=ci" >> $GITHUB_ENV
-          echo "CI=true" >> $GITHUB_ENV
+          # Export sensitive variables list for later steps and set additional security environment variables
+          {
+            echo "SENSITIVE_VARS_FILE=$SENSITIVE_VARS_FILE"
+            echo "NODE_ENV=ci"
+            echo "CI=true"
+          } >> "$GITHUB_ENV"
 
       # Conditional compilation: only run if custom compile command is specified
       # When compile-command is "skip", Slither handles compilation internally
@@ -338,7 +338,7 @@ jobs:
           node "$SCRIPT_PATH" "$INPUT_SARIF" "$CONFIG_PATH" "$OUTPUT_SARIF"
          
       - name: Upload filtered JSON
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: slither-filtered
           path: slither.filtered.json
@@ -346,7 +346,7 @@ jobs:
       - name: Comment PR with formatted SARIF (Slither)
         id: pr-comment
         if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           SARIF_PATH: slither.filtered.json #${{ steps.fp-suppressed.outputs.stdout }}
         with:
@@ -490,43 +490,47 @@ jobs:
         env:
           COMPILE_COMMAND: ${{ inputs.compile-command }}
         run: |
-          echo "# 🔍 Slither Analysis Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Check compilation status
-          if [ "$COMPILE_COMMAND" = "skip" ]; then
-            echo "⏭️ **Compilation**: Skipped (handled by Slither)" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ steps.compile.outcome }}" = "success" ]; then
-            echo "✅ **Compilation**: Success" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ **Compilation**: Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Check Slither execution
-          if [ "${{ steps.slither.outcome }}" = "success" ]; then
-            echo "✅ **Slither Execution**: Success" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ **Slither Execution**: Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Check SARIF generation
-          if [ "${{ steps.slither.outputs.sarif }}" != "" ]; then
-            echo "✅ **SARIF Output**: Generated and uploaded" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ **SARIF Output**: Not generated" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Check suppression status
-          if [ "${{ steps.fp-suppressed.outcome }}" = "success" ]; then
-            echo "✅ **False Positive Suppression**: Applied" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ **False Positive Suppression**: Skipped (no config or script)" >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo "# 🔍 Slither Analysis Summary"
+            echo ""
+            
+            # Check compilation status
+            if [ "$COMPILE_COMMAND" = "skip" ]; then
+              echo "⏭️ **Compilation**: Skipped (handled by Slither)"
+            elif [ "${{ steps.compile.outcome }}" = "success" ]; then
+              echo "✅ **Compilation**: Success"
+            else
+              echo "❌ **Compilation**: Failed"
+            fi
+            
+            # Check Slither execution
+            if [ "${{ steps.slither.outcome }}" = "success" ]; then
+              echo "✅ **Slither Execution**: Success"
+            else
+              echo "❌ **Slither Execution**: Failed"
+            fi
+            
+            # Check SARIF generation
+            if [ "${{ steps.slither.outputs.sarif }}" != "" ]; then
+              echo "✅ **SARIF Output**: Generated and uploaded"
+            else
+              echo "⚠️ **SARIF Output**: Not generated"
+            fi
+            
+            # Check suppression status
+            if [ "${{ steps.fp-suppressed.outcome }}" = "success" ]; then
+              echo "✅ **False Positive Suppression**: Applied"
+            else
+              echo "⚠️ **False Positive Suppression**: Skipped (no config or script)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
           
           # Show filtered results count if available
           if [ -f "slither.filtered.json" ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "## 📊 Filtered Results" >> $GITHUB_STEP_SUMMARY
+            {
+              echo ""
+              echo "## 📊 Filtered Results"
+            } >> "$GITHUB_STEP_SUMMARY"
             
             # Parse SARIF and show count by severity
             python3 -c "
@@ -551,9 +555,11 @@ jobs:
               print(f'- **Total**: {len(results)}')
           except Exception as e:
               print(f'Could not parse SARIF: {e}', file=sys.stderr)
-          " >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "- Results count unavailable" >> $GITHUB_STEP_SUMMARY
+          " >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "- Results count unavailable" >> "$GITHUB_STEP_SUMMARY"
           fi
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "📋 Check [artifacts](../artifacts) for detailed SARIF results" >> $GITHUB_STEP_SUMMARY
+          {
+            echo ""
+            echo "---"
+            echo "📋 Check [artifacts](../artifacts) for detailed SARIF results"
+          } >> "$GITHUB_STEP_SUMMARY"

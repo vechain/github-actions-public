@@ -36,7 +36,7 @@ jobs:
         run: |
           new_tag=${{ env.RELEASE_TAG }}
           echo "new_tag=$new_tag"
-          if [[ ! $new_tag =~ ^v\.?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ ! "$new_tag" =~ ^v\.?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Error: The new tag $new_tag is not in the format v.MAJOR.MINOR.PATCH"
             exit 1
           fi
@@ -45,20 +45,20 @@ jobs:
           # Get the SHA of the new tag
           new_sha=$(git rev-parse "$new_tag")
           echo "new_sha=$new_sha"
-          echo "new_tag=$new_tag" >> $GITHUB_ENV
-          echo "new_sha=$new_sha" >> $GITHUB_ENV
+          echo "new_tag=$new_tag" >> "$GITHUB_ENV"
+          echo "new_sha=$new_sha" >> "$GITHUB_ENV"
 
       - name: Find and replace tags and SHAs in README.md
         run: |
           old_tag=$(grep -oP 'v\.?\d+\.\d+\.\d+' README.md | head -1)
-          echo "old_tag=$old_tag" >> $GITHUB_ENV
+          echo "old_tag=$old_tag" >> "$GITHUB_ENV"
           if [ -z "$old_tag" ]; then
             echo "Error: Could not find the old tag in README.md"
             exit 1
           fi
           # Get the SHA of the old tag
           old_sha=$(git rev-parse "$old_tag")
-          echo "old_sha=$old_sha" >> $GITHUB_ENV
+          echo "old_sha=$old_sha" >> "$GITHUB_ENV"
           if [ -z "$old_sha" ]; then
             echo "Error: Could not find the old SHA for tag $old_tag"
             exit 1
@@ -77,14 +77,14 @@ jobs:
           if git commit -m "Update README.md with new release tag and SHA"; then
             if git push origin main; then
               echo "Changes pushed to main successfully"
-              echo "commit_success=true" >> $GITHUB_ENV
+              echo "commit_success=true" >> "$GITHUB_ENV"
             else
               echo "Push to main failed"
-              echo "commit_success=false" >> $GITHUB_ENV
+              echo "commit_success=false" >> "$GITHUB_ENV"
             fi
           else
             echo "No changes to commit"
-            echo "commit_success=false" >> $GITHUB_ENV
+            echo "commit_success=false" >> "$GITHUB_ENV"
           fi
 
       - name: Create branch and PR if commit to main fails
@@ -93,15 +93,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           branch_name="update-readme-${{ env.new_tag }}"
-          if git checkout -b $branch_name; then
-            git push -u origin $branch_name
+          if git checkout -b "$branch_name"; then
+            git push -u origin "$branch_name"
             PR_BODY="This PR updates the README.md file with the new release tag ${{ env.new_tag }} and SHA ${{ env.new_sha }}."
-            if gh pr create --title "Update README for release ${{ env.new_tag }}" --body "$PR_BODY" --base main --head $branch_name; then
-              echo "pr_creation_success=true" >> $GITHUB_ENV
+            if gh pr create --title "Update README for release ${{ env.new_tag }}" --body "$PR_BODY" --base main --head "$branch_name"; then
+              echo "pr_creation_success=true" >> "$GITHUB_ENV"
             else
               echo "Error: Unable to create the Pull Request. You would need to create it manually."
               echo "::warning::Unable to create the Pull Request. You would need to create it manually."
-              echo "pr_creation_success=false" >> $GITHUB_ENV
+              echo "pr_creation_success=false" >> "$GITHUB_ENV"
             fi
           else
             echo "Error: Unable to create the branch. Make sure you have the necessary permissions."
@@ -130,4 +130,4 @@ jobs:
             else
               echo "- **Outcome:** Unable to create the PR automatically. [Click here to create it manually](https://github.com/${{ github.repository }}/pull/new/update-readme-${{ env.new_tag }})"
             fi
-          } >> $GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"

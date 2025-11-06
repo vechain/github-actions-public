@@ -1,0 +1,10 @@
+# CODEOWNERS file
+# 
+# This file defines code ownership for the repository.
+# When a pull request is opened, the code owners are automatically requested for review.
+# 
+# Default owners for everything in the repo
+* @vechain/security
+
+
+

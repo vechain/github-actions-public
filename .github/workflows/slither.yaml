@@ -265,7 +265,8 @@ jobs:
         env:
           COMPILE_COMMAND: ${{ inputs.compile-command }}
         run: |
-          $COMPILE_COMMAND
+          set -euo pipefail
+          bash -eo pipefail -c "$COMPILE_COMMAND"
 
           # Create symlink for Hardhat projects with custom artifacts path (some projects use src/.artifacts)
           if [ -d "src/.artifacts" ] && [ ! -e "artifacts" ]; then

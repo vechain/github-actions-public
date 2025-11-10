@@ -159,6 +159,7 @@ Security scanner for GitHub Actions workflows that detects security issues and m
 |-------|----------|---------|-------------|
 | `persona` | false | `regular` | Scan persona (regular, pedantic, auditor) |
 | `min_severity` | false | `medium` | Minimum severity to report (low, medium, high) |
+| `min_confidence` | false | `high` | Minimum confidence to report (informational, low, medium, high) |
 
 #### Secrets
 
@@ -185,6 +186,7 @@ zizmor:
   with:
     persona: 'auditor'
     min_severity: 'high'
+    min_confidence: 'medium'
   secrets:
     ZIZMOR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```

@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: 'medium'
+      min_confidence:
+        description: 'Minimum confidence to report'
+        required: false
+        type: string
+        default: 'high'
     secrets:
       ZIZMOR_TOKEN:
         description: 'Personal Access Token for zizmor'
@@ -38,6 +43,16 @@ on:
         type: choice
         default: 'medium'
         options:
+          - low
+          - medium
+          - high
+      min_confidence:
+        description: 'Minimum confidence to report'
+        required: false
+        type: choice
+        default: 'high'
+        options:
+          - informational
           - low
           - medium
           - high
@@ -65,11 +80,12 @@ jobs:
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
 
       - name: Run Zizmor Scan
-        run: uvx zizmor --format=sarif --persona="$PERSONA" --min-severity="$MIN_SEVERITY" --color=never . > results.sarif
+        run: uvx zizmor --format=sarif --persona="$PERSONA" --min-severity="$MIN_SEVERITY" --min-confidence="$MIN_CONFIDENCE" --color=never . > results.sarif
         env:
           GH_TOKEN: ${{ secrets.ZIZMOR_TOKEN }}
           PERSONA: ${{ inputs.persona || 'regular' }}
           MIN_SEVERITY: ${{ inputs.min_severity || 'medium' }}
+          MIN_CONFIDENCE: ${{ inputs.min_confidence || 'high' }}
 
       - name: Install ReviewDog
         uses: reviewdog/action-setup@d8edfce3dd5e1ec6978745e801f9c50b5ef80252 # v1.4.0

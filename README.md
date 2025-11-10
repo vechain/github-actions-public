@@ -32,12 +32,12 @@ on:
 
 jobs:
   zizmor:
-    uses: vechain/github-actions-public/.github/workflows/scan-workflows.yaml@6a6a603f002a84befcc0511f776b9acf42a86d26
+    uses: vechain/github-actions-public/.github/workflows/scan-workflows.yaml@77660aeff2fac9bbb704b3a2ce786814d0b632fa
     secrets:
       ZIZMOR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
   actionlint:
-    uses: vechain/github-actions-public/.github/workflows/action-lint.yaml@6a6a603f002a84befcc0511f776b9acf42a86d26
+    uses: vechain/github-actions-public/.github/workflows/action-lint.yaml@77660aeff2fac9bbb704b3a2ce786814d0b632fa
 ```
 
 > ⚠️ **IMPORTANT:** For production use, it's **highly recommended** to pin to a specific commit SHA or release tag instead of `@main` to ensure consistency and avoid potential issues.
@@ -90,14 +90,14 @@ Static analysis tool for Solidity smart contracts that detects vulnerabilities a
 
 ```yaml
 slither:
-  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.0.1
+  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.1.0
 ```
 
 **Custom configuration:**
 
 ```yaml
 slither:
-  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.0.1
+  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.1.0
   with:
     target: 'contracts/'
     solc-version: '0.8.19'
@@ -126,7 +126,7 @@ check-changes:
 slither:
   needs: check-changes
   if: needs.check-changes.outputs.contracts-changed == 'true'
-  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.0.1
+  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.1.0
   with:
     target: 'contracts/'
     skip-change-detection: true
@@ -136,7 +136,7 @@ slither:
 
 ```yaml
 slither:
-  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.0.1
+  uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.1.0
   with:
     target: 'contracts/'
     env-vars: '{"NODE_ENV": "testing", "DEBUG_MODE": "false"}'
@@ -173,7 +173,7 @@ Security scanner for GitHub Actions workflows that detects security issues and m
 
 ```yaml
 zizmor:
-  uses: vechain/github-actions-public/.github/workflows/scan-workflows.yaml@v.1.0.1
+  uses: vechain/github-actions-public/.github/workflows/scan-workflows.yaml@v.1.1.0
   secrets:
     ZIZMOR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -182,7 +182,7 @@ zizmor:
 
 ```yaml
 zizmor:
-  uses: vechain/github-actions-public/.github/workflows/scan-workflows.yaml@v.1.0.1
+  uses: vechain/github-actions-public/.github/workflows/scan-workflows.yaml@v.1.1.0
   with:
     persona: 'auditor'
     min_severity: 'high'
@@ -212,7 +212,7 @@ Validates GitHub Actions workflow files for syntax errors, best practices, and c
 
 ```yaml
 actionlint:
-  uses: vechain/github-actions-public/.github/workflows/action-lint.yaml@v.1.0.1
+  uses: vechain/github-actions-public/.github/workflows/action-lint.yaml@v.1.1.0
 ```
 
 **On pull requests only:**
@@ -224,7 +224,7 @@ on:
 
 jobs:
   actionlint:
-    uses: vechain/github-actions-public/.github/workflows/action-lint.yaml@v.1.0.1
+    uses: vechain/github-actions-public/.github/workflows/action-lint.yaml@v.1.1.0
 ```
 
 **Features:**
@@ -247,7 +247,7 @@ Automatically updates README.md with new release tags and commit SHAs when a rel
 This workflow is triggered automatically on release events. To use it:
 
 1. Add the workflow to your repository
-2. Ensure your README.md contains version references (e.g., `v.1.0.1` and commit SHAs)
+2. Ensure your README.md contains version references (e.g., `v.1.1.0` and commit SHAs)
 3. Create a new release
 
 **Workflow trigger:**
@@ -260,7 +260,7 @@ on:
 
 jobs:
   update-docs:
-    uses: vechain/github-actions-public/.github/workflows/doc-update.yaml@v.1.0.1
+    uses: vechain/github-actions-public/.github/workflows/doc-update.yaml@v.1.1.0
 ```
 
 **Features:**
@@ -284,7 +284,7 @@ Always pin workflows to specific versions for security and stability:
 uses: vechain/github-actions-public/.github/workflows/slither.yaml@a1b2c3d4...
 
 # ✅ Good - pinned to release tag
-uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.0.1
+uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.1.0
 
 # ⚠️ Avoid - tracks main branch (unpredictable)
 uses: vechain/github-actions-public/.github/workflows/slither.yaml@main
@@ -301,7 +301,7 @@ jobs:
       contents: read
       security-events: write
       pull-requests: write
-    uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.0.1
+    uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.1.0
 ```
 
 ### Secrets Management
@@ -311,7 +311,7 @@ Use GitHub secrets for sensitive data:
 ```yaml
 jobs:
   slither:
-    uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.0.1
+    uses: vechain/github-actions-public/.github/workflows/slither.yaml@v.1.1.0
     secrets:
       MNEMONIC: ${{ secrets.MNEMONIC }}
       # ❌ Never hardcode secrets in workflows

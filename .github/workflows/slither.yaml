@@ -296,7 +296,7 @@ jobs:
 
       # Archive SARIF file and debug logs for troubleshooting and audit trail
       - name: Upload SARIF and debug artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         continue-on-error: true
         if: always()
         with:
@@ -339,7 +339,7 @@ jobs:
           node "$SCRIPT_PATH" "$INPUT_SARIF" "$CONFIG_PATH" "$OUTPUT_SARIF"
          
       - name: Upload filtered JSON
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: slither-filtered
           path: slither.filtered.json

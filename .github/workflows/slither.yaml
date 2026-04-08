@@ -275,7 +275,7 @@ jobs:
           fi
 
       - name: Run Slither
-        uses: crytic/slither-action@4fd765aeef19915d04ddf0be90c2930036a774d8 # v0.4.1
+        uses: crytic/slither-action@b52cc1cbfee9ca3e8722dd5224299d16c9a6b80f # v0.4.2
         id: slither
         with:
           ignore-compile: ${{ inputs.ignore-compile }}

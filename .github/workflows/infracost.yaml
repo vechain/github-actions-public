@@ -1,0 +1,215 @@
+name: Infracost Check
+on:
+  workflow_call:
+    inputs:
+      run-on-tf-changes-only:
+        description: 'Only run if Terraform files have changed'
+        type: boolean
+        default: true
+        required: false
+      comment_behavior:
+        description: 'Behavior for posting Infracost comments'
+        type: string
+        default: 'update'
+        required: false
+        # The other valid behaviors are:
+        #   delete-and-new - Delete previous comments and create a new one.
+        #   hide-and-new - Minimize previous comments and create a new one.
+        #   new - Create a new cost estimate comment on every push.
+        # See https://www.infracost.io/docs/features/cli_commands/#comment-on-pull-requests for other options.
+      root_path:
+        description: 'Root path from where Infracost should start the scan'
+        type: string
+        required: false
+        default: '.'
+      exclude_path:
+        description: 'Paths to exclude from Infracost'
+        type: string
+        required: false
+      terraform_var_files:
+        description: 'Comma-separated list of Terraform variable files to use (e.g., "vars/dev.tfvars,vars/common.tfvars")'
+        type: string
+        required: false
+      terraform_vars:
+        description: 'Comma-separated list of Terraform variables in key=value format (e.g., "instance_type=t3.large,region=us-east-1")'
+        type: string
+        required: false
+    secrets:
+      INFRACOST_API_KEY:
+        description: 'Infracost API key - In case you want to override the default one'
+        required: true
+      TERRAFORM_SSH_KEY:
+        description: 'SSH private key for cloning private Terraform modules (e.g. git@github.com:org/terraform-modules.git)'
+        required: true
+
+# Narrow default token scopes; each job sets the permissions it needs.
+permissions:
+  contents: read
+
+env:
+  # Needed to access private modules
+  SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      terraform: ${{ steps.filter.outputs.terraform }}
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            terraform:
+              - '**/*.tf'
+              - '**/*.tfvars'
+              - '**/*.hcl'
+
+  infracost-pull-request-checks:
+    name: Infracost Pull Request Checks
+    needs: detect-changes
+    if: |
+      github.event_name == 'pull_request' && 
+      (github.event.action == 'opened' || github.event.action == 'synchronize') && 
+      (!inputs.run-on-tf-changes-only || needs.detect-changes.outputs.terraform == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # Required to post comments
+
+    steps:
+      - name: Configure SSH for private Terraform modules
+        env:
+          TERRAFORM_SSH_KEY: ${{ secrets.TERRAFORM_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          ssh-agent -a "${SSH_AUTH_SOCK}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # Never print the key to stdout (logs). Write to a 0600 temp file, ssh-add, then shred immediately.
+          key_file="$(mktemp)"
+          chmod 600 "${key_file}"
+          cleanup_keyfile() { shred -u -z -n 1 "${key_file}" 2>/dev/null || rm -f "${key_file}"; }
+          trap cleanup_keyfile EXIT
+          printf '%s\n' "${TERRAFORM_SSH_KEY}" | tr -d '\r' > "${key_file}"
+          ssh-add "${key_file}"
+          cleanup_keyfile
+          trap - EXIT
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Setup Infracost
+        uses: infracost/actions/setup@d51fc54d23c9ad90f984b884257bd96dc2625067 # v4.1.0
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+          currency: USD # Default currency is USD for now
+
+      - name: Checkout base branch
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: '${{ github.event.pull_request.base.ref }}'
+          persist-credentials: false
+
+      # Generate Infracost JSON file as the baseline.
+      - name: Generate Infracost cost estimate baseline
+        env:
+          TF_VAR_FILES: ${{ inputs.terraform_var_files }}
+          TF_VARS: ${{ inputs.terraform_vars }}
+          EXCLUDE_PATH: ${{ inputs.exclude_path }}
+          ROOT_PATH: ${{ inputs.root_path }}
+        run: |
+          set -euo pipefail
+          cmd=(
+            infracost breakdown
+            --path="$ROOT_PATH"
+            --format=json
+            --out-file=/tmp/infracost-base.json
+          )
+          if [ -n "$TF_VAR_FILES" ]; then
+            IFS=',' read -ra VAR_FILES <<< "$TF_VAR_FILES"
+            for file in "${VAR_FILES[@]}"; do
+              f="$(echo "$file" | xargs)"
+              cmd+=(--terraform-var-file="$f")
+            done
+          fi
+          if [ -n "$TF_VARS" ]; then
+            IFS=',' read -ra VARS <<< "$TF_VARS"
+            for var in "${VARS[@]}"; do
+              v="$(echo "$var" | xargs)"
+              cmd+=(--terraform-var="$v")
+            done
+          fi
+          if [ -n "$EXCLUDE_PATH" ]; then
+            cmd+=(--exclude-path="$EXCLUDE_PATH")
+          fi
+          "${cmd[@]}"
+
+      # Checkout the current PR branch so we can create a diff.
+      - name: Checkout PR branch
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      # Generate an Infracost diff and save it to a JSON file.
+      - name: Generate Infracost diff
+        env:
+          TF_VAR_FILES: ${{ inputs.terraform_var_files }}
+          TF_VARS: ${{ inputs.terraform_vars }}
+          EXCLUDE_PATH: ${{ inputs.exclude_path }}
+          ROOT_PATH: ${{ inputs.root_path }}
+        run: |
+          set -euo pipefail
+          cmd=(
+            infracost diff
+            --path="$ROOT_PATH"
+            --format=json
+            --compare-to=/tmp/infracost-base.json
+            --out-file=/tmp/infracost.json
+          )
+          if [ -n "$TF_VAR_FILES" ]; then
+            IFS=',' read -ra VAR_FILES <<< "$TF_VAR_FILES"
+            for file in "${VAR_FILES[@]}"; do
+              f="$(echo "$file" | xargs)"
+              cmd+=(--terraform-var-file="$f")
+            done
+          fi
+          if [ -n "$TF_VARS" ]; then
+            IFS=',' read -ra VARS <<< "$TF_VARS"
+            for var in "${VARS[@]}"; do
+              v="$(echo "$var" | xargs)"
+              cmd+=(--terraform-var="$v")
+            done
+          fi
+          if [ -n "$EXCLUDE_PATH" ]; then
+            cmd+=(--exclude-path="$EXCLUDE_PATH")
+          fi
+          "${cmd[@]}"
+
+      - name: Post Infracost comment
+        env:
+          COMMENT_BEHAVIOR: ${{ inputs.comment_behavior }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          valid_behaviors=(update new hide-and-new delete-and-new)
+          input_behavior="${COMMENT_BEHAVIOR}"
+          recognized=false
+          for b in "${valid_behaviors[@]}"; do
+            if [[ "$b" == "$input_behavior" ]]; then
+              recognized=true
+              break
+            fi
+          done
+          if [[ "$recognized" != true ]]; then
+            echo "::error file=.github/workflows/infracost.yaml,title=Invalid comment_behavior::Invalid comment_behavior '${input_behavior}'. Must be one of: ${valid_behaviors[*]}"
+            input_behavior="update"
+          fi
+          infracost comment github --path=/tmp/infracost.json \
+            --repo="$GITHUB_REPOSITORY" \
+            --github-token="$GITHUB_TOKEN" \
+            --pull-request="$PR_NUMBER" \
+            --behavior="$input_behavior"

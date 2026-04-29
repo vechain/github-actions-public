@@ -15,6 +15,7 @@ This repository provides the following reusable workflows:
 4. **[Documentation Update](#documentation-update)** - Automatic README updates on release
 5. **[Validate PR Label](#validate-pr-label)** - Ensures semantic versioning labels on pull requests
 6. **[Semantic Versioning](#semantic-versioning)** - Creates and pushes version tags after a merged PR
+7. **[Checkov](#checkov)** - Terraform static analysis and secrets scanning with Checkov
 
 ## How to Use
 
@@ -366,6 +367,45 @@ jobs:
 - Reads increment intent from the same `increment:*` labels as [Validate PR Label](#validate-pr-label)
 - Skips tagging if the current `HEAD` already matches the latest `v.*` tag
 - Annotated tag message includes the PR title
+
+---
+
+### Checkov
+
+Runs [Checkov](https://www.checkov.io/) (via [checkov-action](https://github.com/bridgecrewio/checkov-action)) on the repository for **Terraform** (`framework: terraform`), with an optional [local config file](https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html) `.checkov.yaml` when present. Publishes CLI output and JSON, and uploads `results.json` as a workflow artifact (including when the scan step fails, if the job is still created).
+
+**Workflow:** `.github/workflows/checkov.yaml`
+
+#### Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `skip_path` | false | *(empty)* | Path pattern(s) to skip (Checkov `skip_path`; comma-separated as supported by Checkov). |
+| `soft_fail` | false | `true` | Same behavior as the original workflow when omitted. Set to `false` to fail the job when Checkov reports failed checks. |
+
+`external_checks_dirs` is fixed to `./checkov-external-checks` (same as the first published version) so existing consumers keep identical Checkov CLI arguments.
+
+#### Usage
+
+```yaml
+jobs:
+  checkov:
+    permissions:
+      contents: read
+      actions: write # required for the JSON artifact upload
+    uses: vechain/github-actions-public/.github/workflows/checkov.yaml@v.2.1.1
+    # Optional:
+    # with:
+    #   skip_path: '^examples/'
+    #   soft_fail: false
+```
+
+**Features:**
+
+- Scans the repo root (`directory: .`) for Terraform; optional `.checkov.yaml` when committed
+- Custom checks directory `./checkov-external-checks` (same fixed path as always)
+- Secret scanning across files (`enable_secrets_scan_all_files`) — review findings carefully for false positives
+- Artifact `scan-results` contains `results.json`
 
 ---
 

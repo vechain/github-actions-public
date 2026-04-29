@@ -376,11 +376,6 @@ jobs:
 Runs [Checkov](https://www.checkov.io/) (via [checkov-action](https://github.com/bridgecrewio/checkov-action)) on the repository for **Terraform** (`framework: terraform`), with an optional [local config file](https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html) `.checkov.yaml` when present. Publishes CLI output and JSON, and uploads `results.json` as a workflow artifact (including when the scan step fails, if the job is still created).
 
 **Workflow:** `.github/workflows/checkov.yaml`
-### Infracost Check
-
-Runs [Infracost](https://www.infracost.io/) on pull requests: compares a baseline cost (merge base) with the PR branch, then posts a summary comment on the PR. Intended for repositories that use Terraform (`.tf`, `.tfvars`, `.hcl`). Supports private Terraform modules via an SSH deploy key.
-
-**Workflow:** `.github/workflows/infracost.yaml`
 
 #### Inputs
 
@@ -404,6 +399,27 @@ jobs:
     # with:
     #   skip_path: '^examples/'
     #   soft_fail: false
+```
+
+**Features:**
+
+- Scans the repo root (`directory: .`) for Terraform; optional `.checkov.yaml` when committed
+- Custom checks directory `./checkov-external-checks` (same fixed path as always)
+- Secret scanning across files (`enable_secrets_scan_all_files`) — review findings carefully for false positives
+- Artifact `scan-results` contains `results.json`
+
+---
+
+### Infracost Check
+
+Runs [Infracost](https://www.infracost.io/) on pull requests: compares a baseline cost (merge base) with the PR branch, then posts a summary comment on the PR. Intended for repositories that use Terraform (`.tf`, `.tfvars`, `.hcl`). Supports private Terraform modules via an SSH deploy key.
+
+**Workflow:** `.github/workflows/infracost.yaml`
+
+#### Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
 | `run-on-tf-changes-only` | false | `true` | If `true`, skip the cost job unless Terraform-related files changed (via path filters). |
 | `comment_behavior` | false | `update` | How to post PR comments: `update`, `new`, `hide-and-new`, or `delete-and-new` ([docs](https://www.infracost.io/docs/features/cli_commands/#comment-on-pull-requests)). Invalid values fall back to `update`. |
 | `root_path` | false | `.` | Directory passed to Infracost `--path`. |
@@ -449,10 +465,6 @@ jobs:
 
 **Features:**
 
-- Scans the repo root (`directory: .`) for Terraform; optional `.checkov.yaml` when committed
-- Custom checks directory `./checkov-external-checks` (same fixed path as always)
-- Secret scanning across files (`enable_secrets_scan_all_files`) — review findings carefully for false positives
-- Artifact `scan-results` contains `results.json`
 - Baseline checkout on the PR base ref, then checkout of the PR head for `infracost diff`
 - Optional skip when no Terraform paths changed (`dorny/paths-filter`)
 - `persist-credentials: false` on checkout; GitHub token used only for posting the Infracost comment

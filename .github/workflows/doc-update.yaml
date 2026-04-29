@@ -4,14 +4,13 @@ on:
     types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: write # Required for pushing to repository and updating files
-  pull-requests: write # Required for creating pull requests when direct push fails
-
 jobs:
   update-readme:
     name: Update README with New Release Tag and SHA
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Push README updates; repo contents read via checkout
+      pull-requests: write # gh pr create when direct push to default branch fails
     steps:
       - name: Checkout repository # zizmor: ignore[artipacked] Persist credentials is needed in this case
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

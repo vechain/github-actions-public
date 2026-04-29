@@ -13,6 +13,8 @@ This repository provides the following reusable workflows:
 2. **[Zizmor Workflow Scanner](#zizmor-workflow-scanner)** - Security scanner for GitHub Actions workflows
 3. **[Action Lint](#action-lint)** - Validation and linting for GitHub Actions workflows
 4. **[Documentation Update](#documentation-update)** - Automatic README updates on release
+5. **[Validate PR Label](#validate-pr-label)** - Ensures semantic versioning labels on pull requests
+6. **[Semantic Versioning](#semantic-versioning)** - Creates and pushes version tags after a merged PR
 
 ## How to Use
 
@@ -270,6 +272,100 @@ jobs:
 - Attempts direct push to main branch
 - Creates PR if direct push fails (branch protection enabled)
 - Provides detailed summary of changes
+
+---
+
+### Validate PR Label
+
+Ensures every pull request has exactly one of the semantic versioning labels (`increment:major`, `increment:minor`, `increment:patch`) before merge. Optionally fails if the label is missing, or applies a default label (by default `increment:patch`) via the GitHub API.
+
+**Workflow:** `.github/workflows/validate-pr-label.yaml`
+
+#### Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `FAIL_IF_MISSING_LABEL` | false | `false` | If `true`, the job fails when no increment label is present (forces manual labeling). |
+| `DEFAULT_LABEL` | false | `increment:patch` | Label applied automatically when none is present and `FAIL_IF_MISSING_LABEL` is `false`. |
+
+#### Usage
+
+Call this job from a workflow that runs on `pull_request`. The calling workflow needs permission to add labels (for example `pull-requests: write`).
+
+**Basic usage (auto-apply patch if missing):**
+
+```yaml
+name: PR labels
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  validate-label:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: vechain/github-actions-public/.github/workflows/validate-pr-label.yaml@v.2.0.0
+```
+
+**Require explicit increment label (no auto-apply):**
+
+```yaml
+jobs:
+  validate-label:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: vechain/github-actions-public/.github/workflows/validate-pr-label.yaml@v.2.0.0
+    with:
+      FAIL_IF_MISSING_LABEL: true
+```
+
+**Features:**
+
+- Validates presence of `increment:major`, `increment:minor`, or `increment:patch`
+- Optional automatic default label when validation-only mode is off
+- Pairs with [Semantic Versioning](#semantic-versioning), which reads the same labels after merge
+
+---
+
+### Semantic Versioning
+
+After a pull request is merged, creates a new Git tag in the form `v.MAJOR.MINOR.PATCH` and pushes it to the repository. The bump level is derived from PR labels (`increment:major`, `increment:minor`, `increment:patch`); if none match, patch is used. The workflow name in the YAML file is “Codebase Versioning”.
+
+**Workflow:** `.github/workflows/semantic-versioning.yaml`
+
+#### Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `DEPLOY_KEY` | true | SSH private key with permission to push tags to the repository (configure the matching deploy key in repo settings). |
+
+#### Usage
+
+Invoke from a workflow triggered when a PR is merged (for example `pull_request` with `types: [closed]`). The reusable workflow skips work unless `github.event.pull_request.merged == true`.
+
+**Example:**
+
+```yaml
+name: Version tag on merge
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  tag-release:
+    if: github.event.pull_request.merged == true
+    uses: vechain/github-actions-public/.github/workflows/semantic-versioning.yaml@v.2.0.0
+    secrets:
+      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+```
+
+**Features:**
+
+- Reads increment intent from the same `increment:*` labels as [Validate PR Label](#validate-pr-label)
+- Skips tagging if the current `HEAD` already matches the latest `v.*` tag
+- Annotated tag message includes the PR title
 
 ---
 

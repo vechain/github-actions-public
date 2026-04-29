@@ -16,6 +16,7 @@ This repository provides the following reusable workflows:
 5. **[Validate PR Label](#validate-pr-label)** - Ensures semantic versioning labels on pull requests
 6. **[Semantic Versioning](#semantic-versioning)** - Creates and pushes version tags after a merged PR
 7. **[Checkov](#checkov)** - Terraform static analysis and secrets scanning with Checkov
+8. **[Infracost Check](#infracost-check)** - Terraform cost estimates on pull requests
 
 ## How to Use
 
@@ -375,6 +376,11 @@ jobs:
 Runs [Checkov](https://www.checkov.io/) (via [checkov-action](https://github.com/bridgecrewio/checkov-action)) on the repository for **Terraform** (`framework: terraform`), with an optional [local config file](https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html) `.checkov.yaml` when present. Publishes CLI output and JSON, and uploads `results.json` as a workflow artifact (including when the scan step fails, if the job is still created).
 
 **Workflow:** `.github/workflows/checkov.yaml`
+### Infracost Check
+
+Runs [Infracost](https://www.infracost.io/) on pull requests: compares a baseline cost (merge base) with the PR branch, then posts a summary comment on the PR. Intended for repositories that use Terraform (`.tf`, `.tfvars`, `.hcl`). Supports private Terraform modules via an SSH deploy key.
+
+**Workflow:** `.github/workflows/infracost.yaml`
 
 #### Inputs
 
@@ -398,6 +404,47 @@ jobs:
     # with:
     #   skip_path: '^examples/'
     #   soft_fail: false
+| `run-on-tf-changes-only` | false | `true` | If `true`, skip the cost job unless Terraform-related files changed (via path filters). |
+| `comment_behavior` | false | `update` | How to post PR comments: `update`, `new`, `hide-and-new`, or `delete-and-new` ([docs](https://www.infracost.io/docs/features/cli_commands/#comment-on-pull-requests)). Invalid values fall back to `update`. |
+| `root_path` | false | `.` | Directory passed to Infracost `--path`. |
+| `exclude_path` | false | — | Optional `--exclude-path` for Infracost. |
+| `terraform_var_files` | false | — | Comma-separated tfvars paths (e.g. `vars/dev.tfvars,vars/common.tfvars`). |
+| `terraform_vars` | false | — | Comma-separated `key=value` pairs for `--terraform-var`. |
+
+#### Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `INFRACOST_API_KEY` | true | Infracost Cloud API key. |
+| `TERRAFORM_SSH_KEY` | true | SSH private key used to clone private Terraform modules over SSH (`git@github.com:...`). Configure the matching deploy key or user key as appropriate. |
+
+The workflow file only references secret **names**; values stay in GitHub Actions secrets and are not in the repository. GitHub masks registered secrets in job logs (avoid enabling debug logging that prints environment dumps). For **public** repos, workflows triggered by `pull_request` from **forks** do not receive upstream repository secrets, so outside contributors cannot run jobs that use these keys against your secrets.
+
+#### Usage
+
+Call only from workflows triggered by **`pull_request`** (the reusable workflow expects `github.event.pull_request`). The cost job runs on `opened` and `synchronize`; a separate job detects Terraform file changes when `run-on-tf-changes-only` is enabled.
+
+**Example:**
+
+```yaml
+name: Infracost
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  infracost:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: vechain/github-actions-public/.github/workflows/infracost.yaml@v.2.1.1
+    secrets:
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+      TERRAFORM_SSH_KEY: ${{ secrets.TERRAFORM_SSH_KEY }}
+    with:
+      root_path: infra
+      run-on-tf-changes-only: true
+      comment_behavior: update
 ```
 
 **Features:**
@@ -406,6 +453,9 @@ jobs:
 - Custom checks directory `./checkov-external-checks` (same fixed path as always)
 - Secret scanning across files (`enable_secrets_scan_all_files`) — review findings carefully for false positives
 - Artifact `scan-results` contains `results.json`
+- Baseline checkout on the PR base ref, then checkout of the PR head for `infracost diff`
+- Optional skip when no Terraform paths changed (`dorny/paths-filter`)
+- `persist-credentials: false` on checkout; GitHub token used only for posting the Infracost comment
 
 ---
 

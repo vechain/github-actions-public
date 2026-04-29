@@ -1,0 +1,55 @@
+name: Validate PR Label
+on:
+  workflow_call:
+    inputs:
+      FAIL_IF_MISSING_LABEL:
+        type: boolean
+        description: 'Requires manual label selection on PR, label will not be auto-applied'
+        default: false
+        required: false
+      DEFAULT_LABEL:
+        type: string
+        description: 'Automatically apply this label to the PR'
+        default: 'increment:patch'
+        required: false
+jobs:
+  labeler:
+    name: Validate PR versioning label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if PR label is missing
+        id: label-check
+        if: |
+          !contains(github.event.pull_request.labels.*.name, 'increment:major') &&
+          !contains(github.event.pull_request.labels.*.name, 'increment:minor') &&
+          !contains(github.event.pull_request.labels.*.name, 'increment:patch')
+        run: |
+          echo "Label is missing"
+          echo "label_missing=true" >> $GITHUB_OUTPUT
+
+      - name: Fail if label is missing and manual selection is required
+        if: ${{ inputs.FAIL_IF_MISSING_LABEL && steps.label-check.outputs.label_missing == 'true' }}
+        run: |
+          echo "Missing increment label. Please indicate whether this PR contains major, minor, or patch changes."
+          exit 1
+
+      - name: Add default label if missing
+        if: ${{ !inputs.FAIL_IF_MISSING_LABEL && steps.label-check.outputs.label_missing == 'true' }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          DEFAULT_LABEL: ${{ inputs.DEFAULT_LABEL }}
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: [process.env.DEFAULT_LABEL]
+            })
+
+      - name: Confirm label presence
+        if: |
+          contains(github.event.pull_request.labels.*.name, 'increment:major') ||
+          contains(github.event.pull_request.labels.*.name, 'increment:minor') ||
+          contains(github.event.pull_request.labels.*.name, 'increment:patch')
+        run: echo "Versioning label found. PR can be merged."

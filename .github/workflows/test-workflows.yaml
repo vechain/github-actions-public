@@ -1,0 +1,246 @@
+name: Test reusable workflows
+
+# CI for the reusable workflows in this repo. On every PR that touches a workflow
+# YAML or one of its fixtures (including Dependabot SHA bumps), invoke that
+# workflow against tests/fixtures/<name>/ and assert it still works. On push to
+# main and on manual dispatch, run the full matrix as a regression sweep.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'tests/fixtures/**'
+      - '.nvmrc'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-workflows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect changed workflows
+    runs-on: ubuntu-latest
+    outputs:
+      slither: ${{ steps.f.outputs.slither }}
+      checkov: ${{ steps.f.outputs.checkov }}
+      infracost: ${{ steps.f.outputs.infracost }}
+      action_lint: ${{ steps.f.outputs.action_lint }}
+      scan_workflows: ${{ steps.f.outputs.scan_workflows }}
+      validate_pr_label: ${{ steps.f.outputs.validate_pr_label }}
+      semantic_versioning: ${{ steps.f.outputs.semantic_versioning }}
+      doc_update: ${{ steps.f.outputs.doc_update }}
+      full_run: ${{ steps.full.outputs.full_run }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - id: f
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        with:
+          filters: |
+            slither:
+              - '.github/workflows/slither.yaml'
+              - 'tests/fixtures/slither/**'
+              - '.nvmrc'
+            checkov:
+              - '.github/workflows/checkov.yaml'
+              - 'tests/fixtures/checkov/**'
+            infracost:
+              - '.github/workflows/infracost.yaml'
+              - 'tests/fixtures/infracost/**'
+            action_lint:
+              - '.github/workflows/action-lint.yaml'
+            scan_workflows:
+              - '.github/workflows/scan-workflows.yaml'
+            validate_pr_label:
+              - '.github/workflows/validate-pr-label.yaml'
+            semantic_versioning:
+              - '.github/workflows/semantic-versioning.yaml'
+            doc_update:
+              - '.github/workflows/doc-update.yaml'
+
+      - id: full
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "full_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "full_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test-action-lint:
+    name: action-lint
+    needs: detect
+    if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.action_lint == 'true'
+    uses: ./.github/workflows/action-lint.yaml
+    permissions:
+      contents: read
+
+  test-scan-workflows:
+    name: scan-workflows
+    needs: detect
+    if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.scan_workflows == 'true'
+    uses: ./.github/workflows/scan-workflows.yaml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      checks: write
+    secrets:
+      ZIZMOR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-slither:
+    name: slither
+    needs: detect
+    if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.slither == 'true'
+    uses: ./.github/workflows/slither.yaml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      issues: write
+      actions: write
+    with:
+      target: tests/fixtures/slither/contracts
+      skip-change-detection: true
+      compile-command: skip
+      cache: yarn
+      fail-on: none
+
+  test-checkov:
+    name: checkov
+    needs: detect
+    if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.checkov == 'true'
+    uses: ./.github/workflows/checkov.yaml
+    permissions:
+      contents: read
+      actions: write
+    with:
+      # Confine the scan to the checkov fixture - skip the infracost fixture
+      # (intentionally minimal/unhardened) and any other tf in the tree.
+      skip_path: 'tests/fixtures/infracost'
+      soft_fail: true
+
+  test-validate-pr-label:
+    name: validate-pr-label
+    needs: detect
+    if: github.event_name == 'pull_request' && (needs.detect.outputs.full_run == 'true' || needs.detect.outputs.validate_pr_label == 'true')
+    uses: ./.github/workflows/validate-pr-label.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      DEFAULT_LABEL: 'increment:patch'
+
+  test-semantic-versioning:
+    name: semantic-versioning
+    needs: detect
+    if: github.event_name == 'pull_request' && (needs.detect.outputs.full_run == 'true' || needs.detect.outputs.semantic_versioning == 'true')
+    uses: ./.github/workflows/semantic-versioning.yaml
+    permissions:
+      contents: read
+    with:
+      dry_run: true
+
+  test-doc-update:
+    name: doc-update
+    needs: detect
+    if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.doc_update == 'true'
+    uses: ./.github/workflows/doc-update.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      dry_run: true
+      simulated_tag: 'v.99.0.0'
+
+  test-infracost:
+    name: infracost
+    needs: detect
+    if: github.event_name == 'pull_request' && (needs.detect.outputs.full_run == 'true' || needs.detect.outputs.infracost == 'true')
+    uses: ./.github/workflows/infracost.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      run-on-tf-changes-only: false
+      root_path: tests/fixtures/infracost
+    secrets:
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+
+  # Negative test: doc-update must reject a malformed tag. Atomic - validates
+  # the workflow's own regex check at doc-update.yaml step "Get the new release
+  # tag and SHA". No external tool dependency.
+  #
+  # NOTE: GitHub Actions does NOT allow `continue-on-error` on reusable-workflow
+  # calls (`uses:` jobs accept only name/uses/with/secrets/needs/if/concurrency/
+  # permissions/strategy). This job will appear RED in the UI when the negative
+  # case correctly fails - that is expected. The `assert-doc-update-bad-tag-failed`
+  # job below is the one wired into `required`; it goes green when this one
+  # fails as designed, and goes red if doc-update incorrectly accepts the bad tag.
+  test-doc-update-bad-tag:
+    name: doc-update (bad tag - expected to fail red)
+    needs: detect
+    if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.doc_update == 'true'
+    uses: ./.github/workflows/doc-update.yaml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      dry_run: true
+      simulated_tag: 'notvalid'
+
+  assert-doc-update-bad-tag-failed:
+    name: assert doc-update rejects malformed tag
+    needs: test-doc-update-bad-tag
+    if: always() && needs.test-doc-update-bad-tag.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify the negative case actually failed
+        env:
+          RESULT: ${{ needs.test-doc-update-bad-tag.result }}
+        run: |
+          if [ "$RESULT" != "failure" ]; then
+            echo "::error::Expected doc-update to reject simulated_tag=notvalid (got: $RESULT). Tag-format validation regressed."
+            exit 1
+          fi
+          echo "OK - doc-update correctly rejected the malformed tag."
+
+  required:
+    name: Test harness summary
+    needs:
+      - detect
+      - test-action-lint
+      - test-scan-workflows
+      - test-slither
+      - test-checkov
+      - test-validate-pr-label
+      - test-semantic-versioning
+      - test-doc-update
+      - test-infracost
+      - assert-doc-update-bad-tag-failed
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate test results
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          echo "Job results: $RESULTS"
+          # Fail only on hard failures or cancellations. "skipped" is expected for
+          # workflows whose YAML/fixtures didn't change in this PR.
+          if printf '%s' "$RESULTS" | tr ',' '\n' | grep -qE '^(failure|cancelled)$'; then
+            echo "::error::At least one test job failed."
+            exit 1
+          fi
+          echo "All test jobs passed (or were skipped)."

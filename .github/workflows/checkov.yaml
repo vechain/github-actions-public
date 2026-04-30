@@ -42,13 +42,22 @@ jobs:
             echo "checkov_config=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Check for external checks dir presence
+        id: check_external
+        run: |
+          if [ -d "checkov-external-checks" ]; then
+            echo "external_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "external_present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Test with Checkov
         id: checkov
         uses: bridgecrewio/checkov-action@02a4c5d6a02367e5ea493c34c26b094302fd3f61 # v12.3075.0
         with:
           directory: .
           framework: terraform
-          external_checks_dirs: ./checkov-external-checks
+          external_checks_dirs: ${{ steps.check_external.outputs.external_present == 'true' && './checkov-external-checks' || '' }}
           skip_path: ${{ inputs.skip_path }}
           soft_fail: ${{ inputs.soft_fail }}
           enable_secrets_scan_all_files: true

@@ -39,8 +39,8 @@ on:
         description: 'Infracost API key - In case you want to override the default one'
         required: true
       TERRAFORM_SSH_KEY:
-        description: 'SSH private key for cloning private Terraform modules (e.g. git@github.com:org/terraform-modules.git)'
-        required: true
+        description: 'SSH private key for cloning private Terraform modules (e.g. git@github.com:org/terraform-modules.git). Omit when fixtures/modules do not depend on private Git sources.'
+        required: false
 
 # Narrow default token scopes; each job sets the permissions it needs.
 permissions:
@@ -87,6 +87,10 @@ jobs:
           TERRAFORM_SSH_KEY: ${{ secrets.TERRAFORM_SSH_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${TERRAFORM_SSH_KEY}" ]; then
+            echo "No TERRAFORM_SSH_KEY supplied - skipping SSH agent setup. Private Git module sources will fail to clone."
+            exit 0
+          fi
           ssh-agent -a "${SSH_AUTH_SOCK}"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh

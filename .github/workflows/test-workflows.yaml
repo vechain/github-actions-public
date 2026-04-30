@@ -91,9 +91,10 @@ jobs:
     uses: ./.github/workflows/scan-workflows.yaml
     permissions:
       contents: read
-      security-events: write
-      pull-requests: write
+      actions: read
       checks: write
+      issues: write
+      pull-requests: write
     secrets:
       ZIZMOR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -156,7 +157,9 @@ jobs:
     if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.doc_update == 'true'
     uses: ./.github/workflows/doc-update.yaml
     permissions:
-      contents: read
+      # Match the called workflow's declared job-level permissions. dry_run gates
+      # the actual write paths (commit, push, gh pr create) so no mutation occurs.
+      contents: write
       pull-requests: write
     with:
       dry_run: true
@@ -192,7 +195,7 @@ jobs:
     if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.doc_update == 'true'
     uses: ./.github/workflows/doc-update.yaml
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
     with:
       dry_run: true

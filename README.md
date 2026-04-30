@@ -517,6 +517,23 @@ jobs:
 
 ---
 
+## Testing
+
+Every PR that modifies a workflow YAML or a fixture under `tests/fixtures/` triggers `.github/workflows/test-workflows.yaml`, which invokes the affected reusable workflow against a minimal fixture and asserts it still runs end-to-end. Dependabot SHA bumps are exercised the same way - a bad bump fails CI before merge.
+
+Coverage:
+
+- **action-lint, scan-workflows** - run as-is, no fixture
+- **slither** - runs against `tests/fixtures/slither/contracts/Counter.sol`
+- **checkov** - runs against `tests/fixtures/checkov/main.tf` (skips the infracost fixture)
+- **infracost** - runs against `tests/fixtures/infracost/main.tf` (real API call; needs the `INFRACOST_API_KEY` repo secret)
+- **validate-pr-label** - runs on the PR itself
+- **semantic-versioning, doc-update** - invoked with `dry_run: true` so no tags get pushed and no commits land on `main`
+
+On `push: main` and on manual `workflow_dispatch`, the full matrix runs as a regression sweep. Branch protection should require the `Test harness summary` check.
+
+See `tests/fixtures/README.md` for fixture conventions and how to add coverage when introducing a new reusable workflow.
+
 ## Contributing
 
 Contributions are welcome! Please ensure that:

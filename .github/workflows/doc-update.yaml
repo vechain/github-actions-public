@@ -3,6 +3,29 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'When true, log the README diff but skip the commit, push, and PR creation. Used by the test harness.'
+        type: boolean
+        required: false
+        default: false
+      simulated_tag:
+        description: 'Tag to simulate when no real release event is present (e.g. v.99.0.0). Required when invoking via workflow_call/workflow_dispatch in dry-run.'
+        type: string
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      dry_run:
+        description: 'When true, log the README diff but skip the commit, push, and PR creation. Used by the test harness.'
+        type: boolean
+        required: false
+        default: false
+      simulated_tag:
+        description: 'Tag to simulate when no real release event is present (e.g. v.99.0.0). Required when invoking via workflow_call in dry-run.'
+        type: string
+        required: false
+        default: ''
 
 jobs:
   update-readme:
@@ -32,8 +55,18 @@ jobs:
         id: get-release-info
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SIMULATED_TAG: ${{ inputs.simulated_tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          new_tag=${{ env.RELEASE_TAG }}
+          # Pick simulated_tag when no real release event is in scope (workflow_call / dispatch).
+          if [ -n "$RELEASE_TAG" ]; then
+            new_tag="$RELEASE_TAG"
+          elif [ -n "$SIMULATED_TAG" ]; then
+            new_tag="$SIMULATED_TAG"
+          else
+            echo "Error: no release tag and no simulated_tag provided"
+            exit 1
+          fi
           echo "new_tag=$new_tag"
           if [[ ! "$new_tag" =~ ^v\.?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Error: The new tag $new_tag is not in the format v.MAJOR.MINOR.PATCH"
@@ -41,8 +74,18 @@ jobs:
           fi
           # Fetch all tags (if not already fetched)
           git fetch --tags
-          # Get the SHA of the new tag
-          new_sha=$(git rev-parse "$new_tag")
+          # Get the SHA of the new tag. In dry-run with a simulated tag the tag does not
+          # exist locally, so fall back to the current HEAD SHA so downstream sed has something
+          # deterministic to substitute.
+          if git rev-parse "$new_tag" >/dev/null 2>&1; then
+            new_sha=$(git rev-parse "$new_tag")
+          elif [ "$DRY_RUN" = "true" ]; then
+            new_sha=$(git rev-parse HEAD)
+            echo "DRY RUN: tag $new_tag does not exist; using HEAD SHA $new_sha as placeholder"
+          else
+            echo "Error: tag $new_tag does not exist and not in dry-run"
+            exit 1
+          fi
           echo "new_sha=$new_sha"
           echo "new_tag=$new_tag" >> "$GITHUB_ENV"
           echo "new_sha=$new_sha" >> "$GITHUB_ENV"
@@ -67,7 +110,15 @@ jobs:
           sed -i "s/$old_sha/$new_sha/g" README.md
         
 
+      - name: Show dry-run README diff
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "DRY RUN: would commit the following README.md changes and push to main (or open a PR if main is protected)."
+          git --no-pager diff -- README.md || true
+          echo "commit_success=dry-run" >> "$GITHUB_ENV"
+
       - name: Commit changes to main
+        if: ${{ !inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash  # Use bash without the -e flag
@@ -87,7 +138,7 @@ jobs:
           fi
 
       - name: Create branch and PR if commit to main fails
-        if: env.commit_success == 'false'
+        if: ${{ !inputs.dry_run && env.commit_success == 'false' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -122,7 +173,9 @@ jobs:
             echo "- **New Tag:** ${{ env.new_tag }}"
             echo "- **Old SHA:** ${{ env.old_sha }}"
             echo "- **New SHA:** ${{ env.new_sha }}"
-            if [ "${{ env.commit_success }}" == "true" ]; then
+            if [ "${{ env.commit_success }}" == "dry-run" ]; then
+              echo "- **Outcome:** DRY RUN - no commit, no push, no PR"
+            elif [ "${{ env.commit_success }}" == "true" ]; then
               echo "- **Outcome:** Changes committed to main successfully"
             elif [ "${{ env.pr_creation_success }}" == "true" ]; then
               echo "- **Outcome:** PR created successfully"

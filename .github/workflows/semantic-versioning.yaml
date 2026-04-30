@@ -2,15 +2,22 @@ name: Codebase Versioning
 
 on:
   workflow_call:
+    inputs:
+      dry_run:
+        description: 'When true, computes the next tag and logs it but does NOT push. Used by the test harness to exercise this workflow on a PR without polluting the tag namespace.'
+        type: boolean
+        required: false
+        default: false
     secrets:
       DEPLOY_KEY:
-        required: true
+        description: 'SSH deploy key with push rights. Required for real runs; not needed when dry_run is true.'
+        required: false
 
 jobs:
   auto-versioning:
     runs-on: ubuntu-latest
-    # Don't run if pull request is closed without merging.
-    if: github.event.pull_request.merged == true
+    # Run on merged PRs (real release) or when invoked in dry-run (test harness).
+    if: github.event.pull_request.merged == true || inputs.dry_run
 
     env:
       PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
@@ -19,7 +26,7 @@ jobs:
     - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       with:
         fetch-depth: 0
-        ssh-key: ${{ secrets.DEPLOY_KEY }}
+        ssh-key: ${{ inputs.dry_run && '' || secrets.DEPLOY_KEY }}
 
     - name: Configure Git
       run: |
@@ -113,15 +120,21 @@ jobs:
       if: steps.define-new-tag.outputs.NEW_TAG != ''
       env:
         PR_TITLE: ${{ github.event.pull_request.title }}
+        NEW_TAG: ${{ steps.define-new-tag.outputs.NEW_TAG }}
+        DRY_RUN: ${{ inputs.dry_run }}
       run: |
-        NEW_TAG=${{ steps.define-new-tag.outputs.NEW_TAG }}
         echo "Preparing new tag: ${NEW_TAG}"
 
         if git rev-parse "${NEW_TAG}" >/dev/null 2>&1; then
           echo "Tag ${NEW_TAG} already exists. Skipping tag creation and exiting job."
           exit 0
-        else
-          echo "Creating and pushing new tag: ${NEW_TAG}"
-          git tag -a "${NEW_TAG}" -m "${NEW_TAG} - ${PR_TITLE}"
-          git push origin "${NEW_TAG}"
         fi
+
+        if [ "${DRY_RUN}" = "true" ]; then
+          echo "DRY RUN: would create and push tag ${NEW_TAG} with message '${NEW_TAG} - ${PR_TITLE}'"
+          exit 0
+        fi
+
+        echo "Creating and pushing new tag: ${NEW_TAG}"
+        git tag -a "${NEW_TAG}" -m "${NEW_TAG} - ${PR_TITLE}"
+        git push origin "${NEW_TAG}"

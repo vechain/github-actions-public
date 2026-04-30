@@ -173,7 +173,9 @@ jobs:
             echo "- **New Tag:** ${{ env.new_tag }}"
             echo "- **Old SHA:** ${{ env.old_sha }}"
             echo "- **New SHA:** ${{ env.new_sha }}"
-            if [ "${{ env.commit_success }}" == "true" ]; then
+            if [ "${{ env.commit_success }}" == "dry-run" ]; then
+              echo "- **Outcome:** DRY RUN - no commit, no push, no PR"
+            elif [ "${{ env.commit_success }}" == "true" ]; then
               echo "- **Outcome:** Changes committed to main successfully"
             elif [ "${{ env.pr_creation_success }}" == "true" ]; then
               echo "- **Outcome:** PR created successfully"

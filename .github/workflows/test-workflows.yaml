@@ -192,7 +192,11 @@ jobs:
   test-doc-update-bad-tag:
     name: doc-update (bad tag - expected to fail red)
     needs: detect
-    if: needs.detect.outputs.full_run == 'true' || needs.detect.outputs.doc_update == 'true'
+    # PR-only: this job is designed to fail. Running it on push/main or
+    # workflow_dispatch would leave a permanent red on the default branch
+    # workflow runs and on the badge. PRs touching doc-update.yaml still
+    # exercise it (selective via paths-filter).
+    if: github.event_name == 'pull_request' && needs.detect.outputs.doc_update == 'true'
     uses: ./.github/workflows/doc-update.yaml
     permissions:
       contents: write

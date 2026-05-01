@@ -112,7 +112,7 @@ jobs:
           currency: USD # Default currency is USD for now
 
       - name: Checkout base branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: '${{ github.event.pull_request.base.ref }}'
           persist-credentials: false
@@ -153,7 +153,7 @@ jobs:
 
       # Checkout the current PR branch so we can create a diff.
       - name: Checkout PR branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 

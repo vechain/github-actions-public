@@ -39,8 +39,8 @@ on:
         description: 'Infracost API key - In case you want to override the default one'
         required: true
       TERRAFORM_SSH_KEY:
-        description: 'SSH private key for cloning private Terraform modules (e.g. git@github.com:org/terraform-modules.git)'
-        required: true
+        description: 'SSH private key for cloning private Terraform modules (e.g. git@github.com:org/terraform-modules.git). Omit when fixtures/modules do not depend on private Git sources.'
+        required: false
 
 # Narrow default token scopes; each job sets the permissions it needs.
 permissions:
@@ -60,7 +60,7 @@ jobs:
       terraform: ${{ steps.filter.outputs.terraform }}
     if: github.event_name == 'pull_request'
     steps:
-      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
         with:
           filters: |
@@ -87,6 +87,10 @@ jobs:
           TERRAFORM_SSH_KEY: ${{ secrets.TERRAFORM_SSH_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${TERRAFORM_SSH_KEY}" ]; then
+            echo "No TERRAFORM_SSH_KEY supplied - skipping SSH agent setup. Private Git module sources will fail to clone."
+            exit 0
+          fi
           ssh-agent -a "${SSH_AUTH_SOCK}"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -108,7 +112,7 @@ jobs:
           currency: USD # Default currency is USD for now
 
       - name: Checkout base branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: '${{ github.event.pull_request.base.ref }}'
           persist-credentials: false
@@ -149,7 +153,7 @@ jobs:
 
       # Checkout the current PR branch so we can create a diff.
       - name: Checkout PR branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
